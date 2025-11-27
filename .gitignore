@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# ignore data
+/data/eyes/train
+/data/eyes/test
+/data/eyes/val
+/data/yawn
