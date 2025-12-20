@@ -11,7 +11,7 @@ import os
 # ============================================
 # CONFIGURATION
 # ============================================
-MODEL_PATH = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\models\\eye_state_classifier.h5"
+MODEL_PATH = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\models\\eye_state_classifier.h5"
 EYE_IMG_SIZE = (64, 64)
 
 
@@ -89,8 +89,8 @@ def load_model_fixed(model_path):
     return model
 
 # Example test image paths (update these to match your data)
-SAMPLE_CLOSED_EYE = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\data\\eyes\\test\\Close\\closed_eye_0032.jpg_face_1_R.jpg"
-SAMPLE_OPEN_EYE = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\data\\eyes\\test\\Open\\Al_Leiter_0001_L.jpg"
+SAMPLE_CLOSED_EYE = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\data\\eyes\\test\\Close\\closed_eye_0032.jpg_face_1_R.jpg"
+SAMPLE_OPEN_EYE = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\data\\eyes\\test\\Open\\Al_Leiter_0001_L.jpg"
 
 
 # ============================================

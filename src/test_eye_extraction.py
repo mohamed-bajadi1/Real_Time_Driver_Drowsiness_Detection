@@ -12,11 +12,11 @@ import matplotlib.pyplot as plt
 # ============================================
 # CONFIGURATION
 # ============================================
-MODEL_PATH = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\models\\eye_state_classifier.h5"
+MODEL_PATH = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\models\\eye_state_classifier.h5"
 EYE_IMG_SIZE = (64, 64)
 
 # Test with sample data
-TEST_DATA_DIR = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\data\\eyes\\test"
+TEST_DATA_DIR = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\data\\eyes\\test"
 SAMPLE_CLASSES = ["Close", "Open"]
 SAMPLES_PER_CLASS = 3  # Changed to 3 images per class
 

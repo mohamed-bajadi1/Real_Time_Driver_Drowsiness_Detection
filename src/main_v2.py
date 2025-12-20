@@ -20,7 +20,7 @@ FRAME_HEIGHT = 480
 FPS_DISPLAY = True
 
 # Model configuration
-MODEL_PATH = "C:\\Users\\dell\\Desktop\\IAII\\Deep Learning\\DL_Project\\models\\eye_state_classifier.h5"
+MODEL_PATH = "C:\\Users\\hp\\Desktop\\Real_Time_Driver_Drowsiness_Detection\\models\\eye_state_classifier_v0.h5"
 EYE_IMG_SIZE = (64, 64)  # Model expects 64x64 grayscale input
 USE_MODEL = True  # Set to False to run without model (landmark visualization only)
 
