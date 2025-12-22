@@ -20,6 +20,7 @@ import numpy as np
 import time
 from collections import deque
 import os
+import pygame
 
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -33,16 +34,26 @@ from keras.regularizers import l2
 # CONFIGURATION
 # ============================================
 
+# Sounds settings
+ALARM_VOLUME = 0.7 # 70% volume
+ENABLE_AUDIO = True # disable for testing
+
+# Path reolution for audio file
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+ALARM_SOUND_PATH = os.path.join(PROJECT_ROOT, "data", "sounds", "deep.wav")
+
+
 # Camera settings
 CAMERA_INDEX = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
 # Model settings
-MODEL_PATH = "models/eye_state_classifier_v3.h5"  # v3 model (recommended)
+MODEL_PATH = "../models/eye_state_classifier_v3.h5"  # v3 model (recommended)
 # MODEL_PATH = "models/eye_state_classifier_v2.h5"  # v2 model (had issues)
 # MODEL_PATH = "models/eye_state_classifier.h5"    # v1 model
-EYE_IMG_SIZE = (64, 64)
+EYE_IMG_SIZE = (32, 32)
 
 # Detection threshold - LOWER = more sensitive to closed eyes
 # Recommended: 0.4-0.5 for drowsiness detection (prioritize recall)
@@ -77,7 +88,164 @@ RIGHT_EYE_INDICES = [362, 263, 387, 386, 385, 373, 374, 380]
 MOUTH_INDICES = [61, 291, 0, 17, 269, 405, 314, 17, 84, 181, 91, 146]
 HEAD_POSE_INDICES = [1, 33, 263, 61, 291, 199]
 
+# ============================================
+# AUDIO ALARM SYSTEM (Enhanced with Hysteresis)
+# ============================================
 
+class AlarmController:
+    """
+    Manages audio alarm for drowsiness detection with temporal smoothing.  
+    
+    Features:
+    - Hysteresis:  Alarm requires sustained drowsiness to trigger
+    - Minimum duration: Alarm plays for minimum time once triggered
+    - State tracking: Prevents flickering/stuttering
+    
+    Prevents false alarms from:  
+    - Brief CNN misclassifications
+    - Momentary lighting changes
+    - Quick eye movements
+    """
+    
+    def __init__(self, sound_path, volume=0.7, enabled=True,
+                trigger_threshold=5, min_duration_frames=60, stop_threshold=10):
+        """
+        Initialize alarm system with hysteresis
+        
+        Args: 
+            sound_path: Path to alarm WAV file
+            volume:  Alarm volume (0.0 to 1.0)
+            enabled: Whether audio is enabled
+            trigger_threshold:  Consecutive drowsy frames to START alarm (default: 5 = ~250ms)
+            min_duration_frames: Minimum alarm duration once triggered (default: 60 = ~2-3 seconds)
+            stop_threshold: Consecutive awake frames to STOP alarm (default: 10 = ~500ms)
+        """
+        self.enabled = enabled
+        self.sound = None
+        self.is_playing = False
+        
+        # Hysteresis parameters
+        self. trigger_threshold = trigger_threshold
+        self.min_duration_frames = min_duration_frames
+        self.stop_threshold = stop_threshold
+        
+        # State tracking
+        self.alarm_active = False  # Whether alarm should be playing
+        self.drowsy_counter = 0     # Consecutive drowsy frames
+        self.awake_counter = 0      # Consecutive awake frames (when alarm active)
+        self.frames_since_triggered = 0  # Frames since alarm started
+        
+        if not self.enabled:
+            print("🔇 Audio alarm disabled")
+            return
+        
+        # Initialize pygame mixer
+        try:
+            pygame.mixer.init(
+                frequency=44100,
+                size=-16,
+                channels=2,
+                buffer=512
+            )
+        except Exception as e:
+            print(f"❌ Could not initialize audio system: {e}")
+            self.enabled = False
+            return
+        
+        # Load sound file
+        try:
+            self.sound = pygame.mixer.Sound(sound_path)
+            self.sound.set_volume(volume)
+            print(f"✅ Alarm sound loaded: {os.path.basename(sound_path)}")
+            print(f"   Duration: {self.sound.get_length():.2f}s, Volume: {int(volume*100)}%")
+            print(f"   Trigger threshold: {trigger_threshold} frames")
+            print(f"   Minimum duration: {min_duration_frames} frames (~{min_duration_frames/20:. 1f}s)")
+            
+        except FileNotFoundError:
+            print(f"❌ Alarm sound not found: {sound_path}")
+            print(f"   Audio alarm will be disabled")
+            self.enabled = False
+            self.sound = None
+        except Exception as e:
+            print(f"❌ Error loading alarm:  {e}")
+            self.enabled = False
+            self.sound = None
+    
+    def update_state(self, drowsy_alert):
+        """
+        Update alarm state with hysteresis logic
+        
+        Args:
+            drowsy_alert: Boolean indicating drowsiness detected
+        
+        Returns: 
+            alarm_active: Boolean indicating if alarm should be active
+        """
+        if not self.enabled:
+            return False
+        
+        if drowsy_alert:
+            # Drowsiness detected
+            self.drowsy_counter += 1
+            self.awake_counter = 0  # Reset awake counter
+            
+            # Trigger alarm after sustained drowsiness
+            if self.drowsy_counter >= self.trigger_threshold:
+                if not self.alarm_active:
+                    self.alarm_active = True
+                    self. frames_since_triggered = 0
+                    print(f"🚨 ALARM TRIGGERED (after {self.drowsy_counter} drowsy frames)")
+            
+            # Keep incrementing frame counter when alarm is active
+            if self. alarm_active:
+                self. frames_since_triggered += 1
+        
+        else:
+            # No drowsiness detected
+            self.drowsy_counter = 0  # Reset drowsy counter
+            
+            if self.alarm_active:
+                # Alarm is active, check if we should stop
+                self.awake_counter += 1
+                self.frames_since_triggered += 1
+                
+                # Stop alarm only if:  
+                # 1. Minimum duration has passed AND
+                # 2. Eyes have been open for stop_threshold frames
+                if (self.frames_since_triggered >= self.min_duration_frames and 
+                    self.awake_counter >= self.stop_threshold):
+                    self.alarm_active = False
+                    print(f"🔇 ALARM STOPPED (after {self.frames_since_triggered} frames, {self.awake_counter} awake)")
+        
+        # Control sound playback based on alarm_active state
+        if self.alarm_active:
+            self._play()
+        else:
+            self._stop()
+        
+        return self.alarm_active
+    
+    def _play(self):
+        """Internal method:  Play alarm sound"""
+        if self.sound and not self.is_playing:
+            self.sound.play(loops=-1)
+            self.is_playing = True
+    
+    def _stop(self):
+        """Internal method: Stop alarm sound"""
+        if self.sound and self.is_playing:
+            self.sound.stop()
+            self.is_playing = False
+    
+    def cleanup(self):
+        """Cleanup audio resources"""
+        if self.enabled:  
+            if self.sound:
+                self.sound.stop()
+            pygame.mixer.stop()
+            pygame.mixer.quit()
+            print("🔊 Audio system cleaned up")
+            
 # ============================================
 # CLAHE PREPROCESSING (Critical for real-time!)
 # ============================================
@@ -95,7 +263,7 @@ def apply_clahe(image):
     2. Webcam lighting varies dramatically
     3. CLAHE normalizes contrast, making model predictions consistent
     
-    Args:
+    Args:qq
         image: Grayscale image (uint8)
     
     Returns:
@@ -563,7 +731,7 @@ def draw_landmarks_custom(frame, landmarks, indices, color=(0, 255, 0), thicknes
 
 
 def display_info(frame, fps, detection_status, left_status=None, right_status=None, 
-                drowsy_frames=0, drowsy_alert=False):
+                drowsy_frames=0, drowsy_alert=False, alarm_active=False): 
     """Display comprehensive status information on frame."""
     # Background for info panel
     info_height = 170 if left_status else 100
@@ -613,8 +781,9 @@ def display_info(frame, fps, detection_status, left_status=None, right_status=No
     cv2.putText(frame, "Press 'q' to quit | 't' toggle threshold", (20, info_height - 10), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
     
-    # Drowsiness alert overlay
-    if drowsy_alert:
+    
+    # Drowsiness alert overlay (show if alarm is ACTIVE, not just detected)
+    if alarm_active:  # Changed from drowsy_alert
         # Flash red overlay
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 200), -1)
@@ -625,62 +794,38 @@ def display_info(frame, fps, detection_status, left_status=None, right_status=No
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
         cv2.putText(frame, "WAKE UP!", (250, 350),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 4)
-
+        
+        # Show alarm icon
+        cv2.putText(frame, "🔊 ALARM ON", (frame.shape[1] - 200, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
 # ============================================
 # MAIN APPLICATION
 # ============================================
 
 def main():
-    """Main application loop with all improvements."""
+    """Main application loop with performance profiling."""
     global DETECTION_THRESHOLD, DEBUG_MODE
     
     print("=" * 60)
-    print("Driver Drowsiness Detection System - v3 (Improved)")
+    print("Driver Drowsiness Detection System - v4 (Profiling Mode)")
     print("MediaPipe FaceMesh + CNN Eye-State Classification")
-    print("=" * 60)
-    print("\nKey Improvements:")
-    print("  - CLAHE preprocessing for contrast normalization")
-    print("  - Temporal smoothing to prevent false alarms")
-    print("  - Configurable threshold (prioritize closed-eye recall)")
-    print("  - Drowsiness detection with visual alerts")
     print("=" * 60)
     
     # Load CNN model
     eye_model = None
     if os.path.exists(MODEL_PATH):
-        print(f"\nLoading model from: {MODEL_PATH}")
+        print(f"\nLoading model from:  {MODEL_PATH}")
         try:
             eye_model = load_model_fixed(MODEL_PATH)
             print(f"   Model input shape: {eye_model.input_shape}")
             print(f"   Model parameters: {eye_model.count_params():,}")
-        except Exception as e:
+        except Exception as e: 
             print(f"[ERROR] Could not load model: {e}")
             import traceback
             traceback.print_exc()
     else:
-        print(f"\n[WARNING] Model not found at: {MODEL_PATH}")
-        print("   Searching for alternative models...")
-        
-        # Try alternative paths
-        alt_paths = [
-            "eye_state_classifier_v3.h5",
-            "eye_state_classifier_v3.keras",
-            "eye_state_classifier_v2.h5",
-            "eye_state_classifier.h5",
-            "models/eye_state_classifier_v3.h5",
-            "models/eye_state_classifier.h5",
-            "../models/eye_state_classifier_v3.h5"
-        ]
-        
-        for alt_path in alt_paths:
-            if os.path.exists(alt_path):
-                print(f"   Found: {alt_path}")
-                try:
-                    eye_model = load_model_fixed(alt_path)
-                    break
-                except:
-                    continue
+        print(f"\n[WARNING] Model not found at:  {MODEL_PATH}")
     
     if eye_model is None:
         print("\n[ERROR] No model loaded. Running in visualization-only mode.")
@@ -696,8 +841,55 @@ def main():
     
     print("[OK] Camera initialized successfully")
     
+    # Initialize Audio Alarm System
+    alarm = AlarmController(
+        sound_path=ALARM_SOUND_PATH,
+        volume=ALARM_VOLUME,
+        enabled=ENABLE_AUDIO,
+        trigger_threshold=2,
+        min_duration_frames=10,
+        stop_threshold=3
+    )
+    
     # Initialize temporal smoother
     smoother = TemporalSmoother()
+    
+    # ============================================
+    # PROFILING SETUP
+    # ============================================
+    profiling = {
+        'frame_read': [],
+        'flip_convert': [],
+        'mediapipe': [],
+        'draw_landmarks': [],
+        'eye_extraction_left': [],
+        'cnn_predict_left': [],
+        'eye_extraction_right': [],
+        'cnn_predict_right': [],
+        'temporal_smooth': [],
+        'draw_boxes': [],
+        'alarm_update': [],
+        'display_info': [],
+        'imshow': [],
+        'total':  []
+    }
+    
+    def print_profile():
+        print("\n" + "=" * 70)
+        print("PERFORMANCE PROFILING (last 50 frames)")
+        print("=" * 70)
+        total_avg = 0
+        for key, times in profiling. items():
+            if times:
+                avg = np.mean(times) * 1000
+                total_avg += avg if key != 'total' else 0
+                percent = (avg / (np.mean(profiling['total']) * 1000)) * 100 if profiling['total'] else 0
+                print(f"{key:25s}: {avg:7.2f}ms  ({percent:5.1f}%)")
+        print("=" * 70)
+        if profiling['total']:
+            expected_fps = 1000 / (np.mean(profiling['total']) * 1000)
+            print(f"Expected FPS: {expected_fps:.1f}")
+        print("=" * 70)
     
     # Initialize MediaPipe FaceMesh
     with mp_face_mesh.FaceMesh(
@@ -709,31 +901,36 @@ def main():
         
         print("[OK] MediaPipe FaceMesh initialized")
         print(f"\nDetection threshold: {DETECTION_THRESHOLD}")
-        print(f"Temporal smoothing: {CONSECUTIVE_FRAMES_THRESHOLD} frames")
-        print(f"Drowsiness alert: {DROWSINESS_FRAME_THRESHOLD} frames")
-        print("\nStarting real-time detection...")
-        print("Press 'q' to quit, 't' to toggle threshold\n")
+        print("\n🔍 PROFILING MODE ACTIVE - Stats printed every 50 frames")
+        print("Press 'q' to quit, 'p' to print profile\n")
         
         prev_time = time.time()
         frame_count = 0
         
         while True:
-            ret, frame = cap.read()
+            t_total_start = time.time()
             
-            if not ret:
+            # Frame read
+            t_start = time.time()
+            ret, frame = cap.read()
+            profiling['frame_read'].append(time.time() - t_start)
+            
+            if not ret: 
                 print("[ERROR] Failed to grab frame")
                 break
             
             frame_count += 1
             
-            # Flip for mirror effect
+            # Flip and convert
+            t_start = time.time()
             frame = cv2.flip(frame, 1)
-            
-            # Convert to RGB for MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            profiling['flip_convert'].append(time.time() - t_start)
             
-            # Process with MediaPipe
+            # MediaPipe processing
+            t_start = time. time()
             results = face_mesh.process(rgb_frame)
+            profiling['mediapipe'].append(time.time() - t_start)
             
             face_detected = False
             left_status = None
@@ -748,10 +945,12 @@ def main():
                     landmarks = face_landmarks.landmark
                     
                     # Draw landmarks
+                    t_start = time.time()
                     draw_landmarks_custom(frame, landmarks, LEFT_EYE_INDICES, 
                                          color=(0, 255, 0), thickness=1)
                     draw_landmarks_custom(frame, landmarks, RIGHT_EYE_INDICES, 
                                          color=(0, 255, 0), thickness=1)
+                    profiling['draw_landmarks'].append(time.time() - t_start)
                     
                     # Get eye bounding boxes
                     left_eye_bbox = get_eye_region(frame, landmarks, LEFT_EYE_INDICES)
@@ -765,37 +964,44 @@ def main():
                         right_conf = 0
                         
                         # Left eye
-                        if left_eye_bbox:
+                        if left_eye_bbox: 
+                            t_start = time.time()
                             left_eye_img = extract_eye(frame, left_eye_bbox)
+                            profiling['eye_extraction_left']. append(time.time() - t_start)
+                            
                             if left_eye_img is not None:
+                                t_start = time.time()
                                 _, left_closed_raw, left_conf = predict_eye_state(
                                     eye_model, left_eye_img, DETECTION_THRESHOLD
                                 )
-                                
-                                # Debug: show preprocessed image
-                                if DEBUG_MODE:
-                                    debug_img = (left_eye_img[0, :, :, 0] * 255).astype(np.uint8)
-                                    cv2.imshow('Left Eye (Preprocessed)', 
-                                              cv2.resize(debug_img, (128, 128)))
+                                profiling['cnn_predict_left'].append(time.time() - t_start)
                         
                         # Right eye
                         if right_eye_bbox:
+                            t_start = time.time()
                             right_eye_img = extract_eye(frame, right_eye_bbox)
+                            profiling['eye_extraction_right'].append(time.time() - t_start)
+                            
                             if right_eye_img is not None:
+                                t_start = time.time()
                                 _, right_closed_raw, right_conf = predict_eye_state(
                                     eye_model, right_eye_img, DETECTION_THRESHOLD
                                 )
+                                profiling['cnn_predict_right'].append(time.time() - t_start)
                         
                         # Apply temporal smoothing
                         if left_closed_raw is not None and right_closed_raw is not None:
+                            t_start = time.time()
                             left_state, right_state, drowsy_alert, drowsy_frames = smoother.update(
                                 left_closed_raw, right_closed_raw, left_conf, right_conf
                             )
+                            profiling['temporal_smooth'].append(time.time() - t_start)
                             
                             left_status = (left_state, left_conf)
                             right_status = (right_state, right_conf)
                         
                         # Draw bounding boxes
+                        t_start = time.time()
                         if left_eye_bbox:
                             bbox_color = (0, 0, 255) if left_status and left_status[0] == "CLOSED" else (0, 255, 0)
                             cv2.rectangle(frame, (left_eye_bbox[0], left_eye_bbox[1]),
@@ -805,37 +1011,55 @@ def main():
                             bbox_color = (0, 0, 255) if right_status and right_status[0] == "CLOSED" else (0, 255, 0)
                             cv2.rectangle(frame, (right_eye_bbox[0], right_eye_bbox[1]),
                                         (right_eye_bbox[2], right_eye_bbox[3]), bbox_color, 2)
+                        profiling['draw_boxes'].append(time.time() - t_start)
+            
+            # Alarm control
+            t_start = time. time()
+            alarm_active = alarm.update_state(drowsy_alert)
+            profiling['alarm_update'].append(time.time() - t_start)
             
             # Calculate FPS
             fps, prev_time = calculate_fps(prev_time)
             
             # Display info
+            t_start = time.time()
             display_info(frame, fps, face_detected, left_status, right_status, 
-                        drowsy_frames, drowsy_alert)
+                        drowsy_frames, drowsy_alert, alarm_active)
+            profiling['display_info'].append(time.time() - t_start)
             
             # Show frame
-            cv2.imshow('Drowsiness Detection v3', frame)
+            t_start = time.time()
+            cv2.imshow('Drowsiness Detection v4 (Profiling)', frame)
+            profiling['imshow'].append(time.time() - t_start)
+            
+            # Total frame time
+            profiling['total'].append(time. time() - t_total_start)
+            
+            # Print profiling every 50 frames
+            if frame_count % 50 == 0:
+                print_profile()
+                # Keep only last 50 frames
+                for key in profiling:
+                    profiling[key] = profiling[key][-50:]
             
             # Handle key presses
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 print("\n[STOPPING] Application terminated by user")
                 break
+            elif key == ord('p'):
+                print_profile()
             elif key == ord('t'):
-                # Toggle threshold
                 if DETECTION_THRESHOLD == 0.4:
                     DETECTION_THRESHOLD = 0.5
                 else:
                     DETECTION_THRESHOLD = 0.4
-                print(f"[INFO] Threshold changed to: {DETECTION_THRESHOLD}")
-            elif key == ord('d'):
-                # Toggle debug mode
-                DEBUG_MODE = not DEBUG_MODE
-                print(f"[INFO] Debug mode: {'ON' if DEBUG_MODE else 'OFF'}")
+                print(f"[INFO] Threshold changed to:  {DETECTION_THRESHOLD}")
     
     # Cleanup
     cap.release()
     cv2.destroyAllWindows()
+    alarm.cleanup()
     
     print("\n" + "=" * 60)
     print(f"[OK] Application ended successfully")
