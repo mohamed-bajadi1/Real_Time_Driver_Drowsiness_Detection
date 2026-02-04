@@ -572,9 +572,9 @@ This project was inspired by the need to prevent drowsy driving accidents, which
 
 ## 📞 Contact
 
-**Mohamed Bajadi**
+**Mohamed Bajadi** & **Mustapha Zmirli**
 
-- GitHub: [@mohamed-bajadi1](https://github.com/mohamed-bajadi1)
+- GitHub: [@mohamed-bajadi1](https://github.com/mohamed-bajadi1) - [@Mustapha-Zmirli](https://github.com/Mustapha-Zmirli)
 - Project Link: [https://github.com/mohamed-bajadi1/Real_Time_Driver_Drowsiness_Detection](https://github.com/mohamed-bajadi1/Real_Time_Driver_Drowsiness_Detection)
 
 ---
